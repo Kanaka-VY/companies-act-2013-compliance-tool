@@ -1,14 +1,13 @@
 from flask import Blueprint, request, jsonify
-from groq import Groq
-import os
+import json
 
-describe_bp = Blueprint('describe', __name__)
+from services.groq_client import GroqClient
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+describe_bp = Blueprint("describe", __name__)
 
-@describe_bp.route('/describe', methods=['POST'])
+
+@describe_bp.route("/describe", methods=["POST"])
 def describe():
-
     data = request.get_json()
 
     if not data or "input" not in data:
@@ -29,21 +28,19 @@ Generate:
 - Suggestions
 """
 
+    response = GroqClient().call(prompt)
+    output = response.get("content")
+
     try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}]
-        )
+        parsed = json.loads(output)
+        if isinstance(parsed, dict):
+            parsed["is_fallback"] = response.get("is_fallback", False)
+            return jsonify(parsed)
+    except (TypeError, json.JSONDecodeError):
+        pass
 
-        output = response.choices[0].message.content
-
-        return jsonify({
-            "result": output,
-            "generated_at": "now"
-        })
-
-    except Exception as e:
-        return jsonify({
-            "error": "AI failed",
-            "details": str(e)
-        }), 500
+    return jsonify({
+        "content": output,
+        "is_fallback": response.get("is_fallback", False),
+        "generated_at": "now"
+    })
