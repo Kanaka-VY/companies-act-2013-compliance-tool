@@ -1,0 +1,28 @@
+# Prompt Tuning Log — Day 6
+
+## /describe prompt — v1
+Input 1: "Annual general meeting not held"     Score: 8/10
+Input 2: "Director not filing DIN"             Score: 6/10 ← REWRITE
+Input 3: "Company not filing AOC-4"            Score: 9/10
+...
+
+## Changes made to prompt after tuning:
+- Added explicit instruction: "Reference the exact section of Companies Act 2013"
+- Added: "Format response as JSON with keys: violation, section, severity, description"
+- Temperature kept at 0.3 for factual consistency
+
+#How to update a prompt in template
+# ai-service/prompts/describe_prompt.txt
+You are a Companies Act 2013 compliance expert.
+Analyse the following compliance issue and respond ONLY in JSON.
+
+Issue: {input}
+
+Respond with this exact JSON structure:
+{{
+  "violation": "short title of violation",
+  "section": "exact section of Companies Act 2013",
+  "severity": "HIGH | MEDIUM | LOW",
+  "description": "2-3 sentence explanation",
+  "penalty": "applicable penalty if any"
+}}

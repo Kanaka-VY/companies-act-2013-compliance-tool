@@ -1,26 +1,20 @@
 from flask import Blueprint, request, jsonify
-from groq import Groq
 import json
-import os
 
-# 🔹 Create Blueprint
-recommend_bp = Blueprint('recommend', __name__)
+from services.groq_client import GroqClient
 
-# 🔹 Initialize Groq client (use your real API key here)
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-# 🔹 Route
-@recommend_bp.route('/recommend', methods=['POST'])
+recommend_bp = Blueprint("recommend", __name__)
+
+
+@recommend_bp.route("/recommend", methods=["POST"])
 def recommend():
-
     data = request.get_json()
 
-    # 🔹 Validate input
     if not data or "input" not in data:
         return jsonify({"error": "Input is required"}), 400
 
     user_input = data["input"]
 
-    # 🔹 Prompt
     prompt = f"""
 You are a compliance expert.
 
@@ -42,27 +36,15 @@ IMPORTANT:
 - Do NOT add text before/after JSON
 """
 
+    response = GroqClient().call(prompt)
+    output = response.get("content")
+
     try:
-        # 🔹 Call Groq
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}]
-        )
+        parsed = json.loads(output)
+    except (TypeError, json.JSONDecodeError):
+        parsed = output
 
-        output = response.choices[0].message.content
-
-        # 🔥 Convert string → JSON
-        try:
-            parsed = json.loads(output)
-        except:
-            parsed = output  # fallback if AI gives invalid JSON
-
-        return jsonify({
-            "recommendations": parsed
-        })
-
-    except Exception as e:
-        return jsonify({
-            "error": "AI failed",
-            "details": str(e)
-        }), 500
+    return jsonify({
+        "recommendations": parsed,
+        "is_fallback": response.get("is_fallback", False)
+    })
