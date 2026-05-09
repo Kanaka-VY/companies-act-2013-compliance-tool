@@ -1,56 +1,58 @@
-from flask import Flask, request, jsonify
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-import re, html
+from pathlib import Path
 
-from routes.describe import describe_bp
-from routes.health import health_bp
-from routes.recommend import recommend_bp
-from routes.report import report_bp
+from dotenv import load_dotenv
+from flask import Flask
 
-app = Flask(__name__)
-
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["30 per minute"]
-)
-
-INJECTION_PATTERNS = [
-    r"ignore previous instructions",
-    r"forget your prompt",
-    r"you are now",
-    r"system:",
-]
-
-def sanitise_input(text: str) -> str:
-    text = html.escape(text.strip())
-    if not text:
-        return None
-    for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return None
-    return text
-
-@app.before_request
-def validate_input():
-    if request.method == "POST" and request.is_json:
-        data = request.get_json()
-        for key, value in data.items():
-            if isinstance(value, str):
-                clean = sanitise_input(value)
-                if clean is None:
-                    return jsonify({
-                        "error": "Invalid input detected",
-                        "code": "INJECTION_DETECTED"
-                    }), 400
+from config import Config
+from routes.compliance_routes import compliance_bp
+from routes.health_routes import health_bp
+from services.cache_service import CacheService
+from services.chroma_service import ChromaService
+from services.compliance_service import ComplianceService
+from services.groq_client import GroqClient
+from services.metrics_service import MetricsService
+from services.prompt_service import PromptService
 
 
-app.register_blueprint(health_bp)
-app.register_blueprint(describe_bp)
-app.register_blueprint(recommend_bp)
-app.register_blueprint(report_bp)
+def create_app() -> Flask:
+    load_dotenv()
+    app = Flask(__name__)
+    app.config.from_object(Config)
+
+    prompt_service = PromptService(str(Path(__file__).parent / "prompts"))
+    groq_client = GroqClient(
+        api_key=app.config["GROQ_API_KEY"],
+        base_url=app.config["GROQ_BASE_URL"],
+        model=app.config["GROQ_MODEL"],
+        timeout_seconds=app.config["GROQ_TIMEOUT_SECONDS"],
+    )
+    cache_service = CacheService(app.config["REDIS_URL"])
+    metrics_service = MetricsService()
+    chroma_service = ChromaService(
+        persist_dir=app.config["CHROMA_PERSIST_DIR"],
+        collection_name=app.config["CHROMA_COLLECTION"],
+        embedding_model=app.config["EMBEDDING_MODEL"],
+    )
+    compliance_service = ComplianceService(prompt_service, groq_client, chroma_service)
+
+    app.extensions["cache_service"] = cache_service
+    app.extensions["metrics_service"] = metrics_service
+    app.extensions["chroma_service"] = chroma_service
+    app.extensions["compliance_service"] = compliance_service
+
+    @app.after_request
+    def add_security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none';"
+        return response
+
+    app.register_blueprint(compliance_bp)
+    app.register_blueprint(health_bp)
+    return app
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    flask_app = create_app()
+    flask_app.run(host=Config.APP_HOST, port=Config.APP_PORT, debug=Config.DEBUG)
